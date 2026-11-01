@@ -1,0 +1,45 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pytest:
+    name: pytest (py${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.9", "3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Byte-compile both modules
+        run: python -m py_compile leadbot.py localbot.py
+
+      - name: Run test suite
+        run: python -m pytest -q --tb=short
+
+      - name: Smoke-test the CLI entry points
+        # --help must never touch the network or send anything, so this
+        # proves the argument parsing and imports work without a live run.
+        run: |
+          python leadbot.py --help
+          python localbot.py --help
