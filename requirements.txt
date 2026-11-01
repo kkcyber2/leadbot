@@ -1,0 +1,9 @@
+# Runtime dependencies: NONE.
+#
+# leadbot.py and localbot.py are deliberately standard-library only, so the
+# GitHub Actions job needs no install step and cannot break on a dependency
+# bump. That is a design constraint, not an oversight — see README.
+#
+# This file exists only for the test suite and local development.
+
+pytest>=8.0,<9.0
