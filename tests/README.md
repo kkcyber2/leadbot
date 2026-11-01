@@ -12,7 +12,7 @@ python -m pytest -q
 
 115 tests across two files, 0 network calls, ~0.4 s.
 
-## `test_leadbot.py` — the job pipeline (60 tests)
+## `test_leadbot.py` — the job pipeline (53 tests)
 
 | Group | What it pins down |
 |---|---|
@@ -30,7 +30,7 @@ The overlap test is the interesting one: a term in both `must_match_title` and
 `block_title_terms` makes the gate order-dependent, so behaviour becomes an
 accident rather than a rule.
 
-## `test_localbot.py` — the local-business pipeline (55 tests)
+## `test_localbot.py` — the local-business pipeline (62 tests)
 
 | Group | What it pins down |
 |---|---|
