@@ -1,0 +1,109 @@
+name: leadbot
+
+# Free forever on a PUBLIC repo (unlimited Actions minutes).
+# On a PRIVATE repo this uses the 2,000 free Linux minutes/month —
+# one run is ~3-5 minutes (job pipeline + local business pipeline),
+# so ~20 runs/day is still inside the free tier.
+#
+# v2: ONE workflow now runs BOTH pipelines. leadbot.py calls localbot.py
+# internally, so there is nothing extra to schedule or maintain.
+on:
+  schedule:
+    # 06:30 UTC = 11:30 Asia/Karachi. One digest a day, mid-morning.
+    # GitHub's scheduler is best-effort and can drift 5-20 min under load.
+    - cron: "30 6 * * *"
+  workflow_dispatch:            # manual "Run workflow" button in the GitHub app
+    inputs:
+      local_only:
+        description: "Run only the local-business pipeline"
+        type: boolean
+        default: false
+      market:
+        description: "Limit local pipeline to one city (e.g. Dubai). Blank = all."
+        type: string
+        default: ""
+      no_local:
+        description: "Skip local businesses, job boards only"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write              # to commit state.json back
+
+concurrency:
+  group: leadbot
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20        # raised from 15: the local pipeline does real HTTP audits
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # No pip install anywhere: leadbot.py and localbot.py are standard-library
+      # only. This step is deliberately absent so the workflow cannot fail on a
+      # dependency, a resolver outage, or a yanked package.
+
+      - name: Build the run flags
+        id: flags
+        run: |
+          F=""
+          if [ "${{ inputs.local_only }}" = "true" ]; then F="$F --local"; fi
+          if [ "${{ inputs.no_local }}"   = "true" ]; then F="$F --no-local"; fi
+          if [ -n "${{ inputs.market }}" ]; then F="$F --local-market ${{ inputs.market }}"; fi
+          echo "args=$F" >> "$GITHUB_OUTPUT"
+          echo "Running with:$F"
+
+      - name: Run leadbot (job boards + local businesses)
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+          SHEETS_WEBHOOK_URL: ${{ secrets.SHEETS_WEBHOOK_URL }}
+          SHEETS_TOKEN:       ${{ secrets.SHEETS_TOKEN }}
+          GITHUB_TOKEN:       ${{ secrets.GITHUB_TOKEN }}
+          HUNTER_API_KEY:     ${{ secrets.HUNTER_API_KEY }}
+        run: python3 leadbot.py ${{ steps.flags.outputs.args }}
+
+      - name: Persist dedupe state
+        run: |
+          git config user.name  "leadbot"
+          git config user.email "leadbot@users.noreply.github.com"
+          git add state.json state.local.json out/ 2>/dev/null || true
+          if git diff --staged --quiet; then
+            echo "nothing to commit"
+          else
+            git commit -m "leadbot: digest $(date -u +%Y-%m-%d)"
+            git push
+          fi
+
+      - name: Keep the digests as artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: digest-${{ github.run_number }}
+          path: out/
+          retention-days: 14
+
+  # ── Failure alarm ─────────────────────────────────────────────────────────
+  # If the job fails, tell kk on Telegram. A silent dead pipeline is worse
+  # than no pipeline — that is exactly how "the free tier stopped working
+  # three weeks ago" goes unnoticed.
+  notify-failure:
+    needs: run
+    if: failure()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Telegram alert
+        env:
+          TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          CHAT:  ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          if [ -z "$TOKEN" ] || [ -z "$CHAT" ]; then exit 0; fi
+          curl -s -X POST "https://api.telegram.org/bot$TOKEN/sendMessage" \
+            -d "chat_id=$CHAT" \
+            --data-urlencode "text=⚠️ leadbot run FAILED. Open the Actions tab: https://github.com/${{ github.repository }}/actions"
